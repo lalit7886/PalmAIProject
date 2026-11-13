@@ -1,5 +1,6 @@
 
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from contextlib import contextmanager
 from pathlib import Path
@@ -9,6 +10,21 @@ from src.core.logging import logging
 from src.core.config import get_settings
 
 settings = get_settings()
+
+
+@dataclass(frozen=True)
+class InterviewBooking:
+    booking_id: str
+    user_id: str
+    conversation_id: str
+    name: str
+    email: str
+    interview_date: str
+    interview_time: str
+    created_at: str
+    timezone: str = "Asia/Kathmandu"
+    calendar_event_id: str | None = None
+    calendar_event_url: str | None = None
 
 
 @contextmanager
@@ -55,6 +71,144 @@ def init_document_table():
         """)
 
     logging.info("Document audit table initialized")
+
+
+def init_interview_bookings_table() -> None:
+    with get_db_connection() as con:
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS interview_bookings (
+                booking_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL,
+                interview_date TEXT NOT NULL,
+                interview_time TEXT NOT NULL,
+                timezone TEXT NOT NULL DEFAULT 'Asia/Kathmandu',
+                calendar_event_id TEXT,
+                calendar_event_url TEXT,
+                created_at TEXT NOT NULL,
+                UNIQUE(user_id, conversation_id)
+            )
+            """
+        )
+        columns = {
+            row["name"]
+            for row in con.execute("PRAGMA table_info(interview_bookings)")
+        }
+        migrations = {
+            "timezone": (
+                "ALTER TABLE interview_bookings ADD COLUMN "
+                "timezone TEXT NOT NULL DEFAULT 'Asia/Kathmandu'"
+            ),
+            "calendar_event_id": (
+                "ALTER TABLE interview_bookings ADD COLUMN calendar_event_id TEXT"
+            ),
+            "calendar_event_url": (
+                "ALTER TABLE interview_bookings ADD COLUMN calendar_event_url TEXT"
+            ),
+        }
+        for column, statement in migrations.items():
+            if column not in columns:
+                con.execute(statement)
+    logging.info("Interview booking table initialized")
+
+
+def get_interview_booking(
+    *,
+    user_id: str,
+    conversation_id: str,
+) -> InterviewBooking | None:
+    init_interview_bookings_table()
+    with get_db_connection() as con:
+        row = con.execute(
+            """
+            SELECT booking_id, user_id, conversation_id, name, email,
+                   interview_date, interview_time, created_at, timezone,
+                   calendar_event_id, calendar_event_url
+            FROM interview_bookings
+            WHERE user_id = ? AND conversation_id = ?
+            """,
+            (user_id, conversation_id),
+        ).fetchone()
+    return InterviewBooking(**dict(row)) if row is not None else None
+
+
+def save_interview_booking(
+    *,
+    user_id: str,
+    conversation_id: str,
+    name: str,
+    email: str,
+    interview_date: str,
+    interview_time: str,
+    timezone_name: str,
+    calendar_event_id: str,
+    calendar_event_url: str | None,
+) -> tuple[InterviewBooking, bool]:
+    from uuid import uuid4
+
+    required_values = {
+        "user_id": user_id,
+        "conversation_id": conversation_id,
+        "name": name,
+        "email": email,
+        "interview_date": interview_date,
+        "interview_time": interview_time,
+    }
+    if any(not value.strip() for value in required_values.values()):
+        raise ValueError("Interview booking fields must not be empty.")
+
+    init_interview_bookings_table()
+    booking_id = str(uuid4())
+    created_at = datetime.now(timezone.utc).isoformat()
+    with get_db_connection() as con:
+        cursor = con.execute(
+            """
+            INSERT OR IGNORE INTO interview_bookings (
+                booking_id, user_id, conversation_id, name, email,
+                interview_date, interview_time, timezone, calendar_event_id,
+                calendar_event_url, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                booking_id,
+                user_id,
+                conversation_id,
+                name,
+                email,
+                interview_date,
+                interview_time,
+                timezone_name,
+                calendar_event_id,
+                calendar_event_url,
+                created_at,
+            ),
+        )
+        created = cursor.rowcount == 1
+        row = con.execute(
+            """
+            SELECT booking_id, user_id, conversation_id, name, email,
+                   interview_date, interview_time, created_at, timezone,
+                   calendar_event_id, calendar_event_url
+            FROM interview_bookings
+            WHERE user_id = ? AND conversation_id = ?
+            """,
+            (user_id, conversation_id),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("Unable to retrieve the saved interview booking.")
+
+    booking = InterviewBooking(**dict(row))
+    logging.info(
+        "Interview booking %s for user=%s conversation=%s",
+        "created" if created else "already exists",
+        user_id,
+        conversation_id,
+    )
+    return booking, created
 
 
 def save_document_metadata(metadata: dict[str, object]) -> str | None:

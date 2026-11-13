@@ -89,3 +89,96 @@ def test_save_document_metadata_is_idempotent_for_same_user_and_hash(audit_db):
     assert first_document_id == "doc-5"
     assert second_document_id == "doc-5"
     assert audit.get_document_by_hash("hash-5", "user-5")["document_id"] == "doc-5"
+
+
+def test_save_interview_booking_persists_booking(audit_db):
+    booking, created = audit.save_interview_booking(
+        user_id="user-1",
+        conversation_id="conversation-1",
+        name="Alex Candidate",
+        email="alex@example.com",
+        interview_date="2026-12-01",
+        interview_time="14:30",
+        timezone_name="Asia/Kathmandu",
+        calendar_event_id="event-1",
+        calendar_event_url="https://calendar.google.com/event?eid=event-1",
+    )
+
+    assert created is True
+    assert booking.booking_id
+    assert booking.name == "Alex Candidate"
+    assert booking.email == "alex@example.com"
+    assert booking.interview_date == "2026-12-01"
+    assert booking.interview_time == "14:30"
+
+
+def test_save_interview_booking_is_idempotent_per_conversation(audit_db):
+    booking_values = {
+        "user_id": "user-1",
+        "conversation_id": "conversation-1",
+        "name": "Alex Candidate",
+        "email": "alex@example.com",
+        "interview_date": "2026-12-01",
+        "interview_time": "14:30",
+        "timezone_name": "Asia/Kathmandu",
+        "calendar_event_id": "event-1",
+        "calendar_event_url": "https://calendar.google.com/event?eid=event-1",
+    }
+
+    first, first_created = audit.save_interview_booking(**booking_values)
+    second, second_created = audit.save_interview_booking(
+        **{**booking_values, "interview_date": "2026-12-02"}
+    )
+
+    assert first_created is True
+    assert second_created is False
+    assert second.booking_id == first.booking_id
+    assert second.interview_date == "2026-12-01"
+
+
+def test_get_interview_booking_migrates_existing_table(audit_db):
+    with sqlite3.connect(audit_db) as connection:
+        connection.execute(
+            """
+            CREATE TABLE interview_bookings (
+                booking_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL,
+                interview_date TEXT NOT NULL,
+                interview_time TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(user_id, conversation_id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO interview_bookings (
+                booking_id, user_id, conversation_id, name, email,
+                interview_date, interview_time, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "booking-legacy",
+                "user-legacy",
+                "conversation-legacy",
+                "Legacy Candidate",
+                "legacy@example.com",
+                "2026-12-01",
+                "14:30",
+                "2026-11-13T00:00:00+00:00",
+            ),
+        )
+
+    booking = audit.get_interview_booking(
+        user_id="user-legacy",
+        conversation_id="conversation-legacy",
+    )
+
+    assert booking is not None
+    assert booking.booking_id == "booking-legacy"
+    assert booking.timezone == "Asia/Kathmandu"
+    assert booking.calendar_event_id is None

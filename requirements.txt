@@ -9,4 +9,7 @@ langchain-huggingface>=0.1
 langchain-pinecone>=0.2
 langchain-openai>=0.3
 pinecone>=5.0
+redis>=5.0
+google-api-python-client>=2.100
+google-auth>=2.20
 pypdf>=5.0

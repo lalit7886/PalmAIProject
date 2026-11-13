@@ -53,8 +53,10 @@ def add_document_to_rag(
     strategy: str,
     thread_id: str,
     user_id: str,
+    original_filename: str | None = None,
 ) -> dict[str, Any]:
     path = Path(file_path)
+    filename = original_filename or path.name
     text = read_file_text(file_path)
 
     if not text.strip():
@@ -98,7 +100,7 @@ def add_document_to_rag(
             "document_id": document_id,
             "chunk_id": f"{document_id}_{index}",
             "chunk_index": index,
-            "filename": path.name,
+            "filename": filename,
             "source": str(path),
             "file_type": path.suffix.lower(),
             "thread_id": thread_id,
@@ -119,7 +121,7 @@ def add_document_to_rag(
         "document_id": document_id,
         "user_id": user_id,
         "thread_id": thread_id,
-        "filename": path.name,
+        "filename": filename,
         "file_type": path.suffix.lower(),
         "source": str(path),
         "content_hash": content_hash,
